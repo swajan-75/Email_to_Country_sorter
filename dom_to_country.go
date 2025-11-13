@@ -340,6 +340,30 @@ func parse_country(country string) string{
 	return "Unknown";
 }
 
+func is_google(domain string) bool {
+	if domain == "" {
+		return false
+	}
+	mx, err := net.LookupMX(domain)
+	if domain =="gmail.com" || domain =="google.com" || domain =="googlemail.com" {
+		return false;
+	}
+	if err != nil {
+		//fmt.Println("MX lookup error for", domain, ":", err)
+		return false
+	}
+
+	google_mx_regex := regexp.MustCompile("(?i)l\\.google\\.com")
+
+	for _, r := range mx {
+		if google_mx_regex.MatchString(r.Host) {
+			//fmt.Println(domain," ",r.Host)
+			return true
+		}
+	}
+	return false
+}
+
 func whois_info(domain string) string{
 	whois_raw,err := whois.Whois(get_ip(domain));
 	if err != nil {
@@ -359,15 +383,17 @@ func parse_whois(whois_raw string){
 }
 
 func save_data(country string,email string){
+	output_folder := "results";
 	folder_name := parse_country(country);
+	full_folder_name := fmt.Sprintf("%s/%s",output_folder,folder_name);
 	
     file_name := strings.ReplaceAll(folder_name, " ", "_") + "_" + timestamp + ".txt"
-	err :=os.MkdirAll(folder_name, os.ModePerm);
+	err :=os.MkdirAll(full_folder_name, os.ModePerm);
 	if err != nil {
 		fmt.Println("Error creating folder:", err);
 		return;
 	}
-	file_path := fmt.Sprintf("%s/%s",folder_name,file_name);
+	file_path := fmt.Sprintf("%s/%s",full_folder_name,file_name);
 	f, err := os.OpenFile(file_path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644);
 	if err != nil {
 		fmt.Println("Error opening/creating file:", err);
@@ -415,6 +441,9 @@ func workers(wg *sync.WaitGroup, ch <- chan string , dom_hash_map *sync.Map, cou
 			mu.Unlock();
 
 		}else{
+			// if(!is_google(domain)){
+			// 	continue;
+			// }
 			whois_info := whois_info(domain);
 			if whois_info =="error"{
 				continue;
@@ -458,10 +487,10 @@ func main()  {
 	scanner := bufio.NewScanner(file);
 	dom_hash_map := sync.Map{};
 	country_hash := sync.Map{};
-	jobs := make(chan string , 100);
+	jobs := make(chan string , 1000);
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	numWorkers := 1
+	numWorkers := 100
 	for i:=1;i<=numWorkers;i++{
 		wg.Add(1);
 		go workers(&wg,jobs,&dom_hash_map,&country_hash,&mu);

@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/emirpasic/gods/maps/hashmap"
+	//"github.com/emirpasic/gods/maps/hashmap"
 	"github.com/likexian/whois"
 	"github.com/likexian/whois-parser"
 )
@@ -393,7 +393,7 @@ func get_domain(email string) string{
 	return parts[1];
 }
 
-func workers(wg *sync.WaitGroup, ch <- chan string , dom_hash_map *sync.Map, country_hash *sync.Map){
+func workers(wg *sync.WaitGroup, ch <- chan string , dom_hash_map *sync.Map, country_hash *sync.Map , mu *sync.Mutex){
 	defer wg.Done()
 	for email := range ch {
 		domain := get_domain(email);
@@ -403,6 +403,7 @@ func workers(wg *sync.WaitGroup, ch <- chan string , dom_hash_map *sync.Map, cou
 		val , ok := dom_hash_map.Load(domain)
 		if ok {
 			country := val.(string);
+			mu.Lock();
 			cnt_inter, ok := country_hash.Load(country);
 			if(ok){
 				cnt :=cnt_inter.(int);
@@ -411,6 +412,7 @@ func workers(wg *sync.WaitGroup, ch <- chan string , dom_hash_map *sync.Map, cou
 				save_data(country,email);
 				cnt=0;
 			}
+			mu.Unlock();
 
 		}else{
 			whois_info := whois_info(domain);
@@ -419,16 +421,21 @@ func workers(wg *sync.WaitGroup, ch <- chan string , dom_hash_map *sync.Map, cou
 			}
 			info := ParseWhois(whois_info);
 			dom_hash_map.Store(domain,info.Country);
+			mu.Lock();
 			if cnt_inter, ok := country_hash.Load(info.Country); ok {
 				cnt := cnt_inter.(int);
 				country_hash.Store(info.Country,cnt+1);
 				fmt.Println("Email : ",email," Country:", parse_country(info.Country)," | Total Country : ",cnt+1)
 				save_data(info.Country,email);
-				continue;
-			}
-			country_hash.Store(info.Country,1);
+				
+			}else{
+				country_hash.Store(info.Country,1);
 			fmt.Println("Email : ",email," Country:", parse_country(info.Country)," | Total Country : ",1)
 			save_data(info.Country,email);
+			
+			}
+			mu.Unlock();
+			
 		}
 
 	}
@@ -449,46 +456,25 @@ func main()  {
 	}
 	defer file.Close();
 	scanner := bufio.NewScanner(file);
-	dom_hash_map := hashmap.New();
-	country_hash := hashmap.New();
+	dom_hash_map := sync.Map{};
+	country_hash := sync.Map{};
+	jobs := make(chan string , 100);
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	numWorkers := 1
+	for i:=1;i<=numWorkers;i++{
+		wg.Add(1);
+		go workers(&wg,jobs,&dom_hash_map,&country_hash,&mu);
+	}
 	for scanner.Scan(){
 		email := strings.TrimSpace(scanner.Text());
-		if email == "" {
+		if email ==""{
 			continue;
 		}
-		parts := strings.Split(email,"@");
-		if len(parts)!=2 {
-			continue;
-		}
-		domain := parts[1];
-		value, ok := dom_hash_map.Get(domain);
-		if (ok){
-			cnt_inter, _:= country_hash.Get(value);
-			cnt := cnt_inter.(int);
-			country_hash.Put(value,cnt+1);
-			
-			fmt.Println("Email : ",email," Country: ", parse_country(value.(string)), " | Total Country : ",cnt+1)
-			save_data(value.(string),email);
-			cnt=0;
-		}else{
-			whois_info := whois_info(domain);
-			if whois_info =="error"{
-				continue;
-			}
-			info := ParseWhois(whois_info);
-			dom_hash_map.Put(domain,info.Country);
-			if cnt_inter, ok := country_hash.Get(info.Country); ok {
-				cnt := cnt_inter.(int);
-				country_hash.Put(info.Country,cnt+1);
-				fmt.Println("Email : ",email," Country:", parse_country(info.Country)," | Total Country : ",cnt+1)
-				save_data(info.Country,email);
-				continue;
-			}
-			country_hash.Put(info.Country,1);
-			fmt.Println("Email : ",email," Country:", parse_country(info.Country)," | Total Country : ",1)
-			save_data(info.Country,email);
-		}
+		jobs <- email;	
 		
 	}
+	close(jobs);
+	wg.Wait();
 	
 }
